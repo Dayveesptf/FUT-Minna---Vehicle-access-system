@@ -1,47 +1,59 @@
-# Stage 1: Composer
-FROM composer:2 AS composer
-
-WORKDIR /app
-
-COPY composer.json composer.lock ./
-RUN composer install \
-    --no-dev \
-    --optimize-autoloader \
-    --no-interaction \
-    --no-scripts
-
-COPY . .
-RUN composer dump-autoload --optimize
-
-
-# Stage 2: Node
-FROM node:20 AS node
+# -----------------------------
+# Stage 1: Build Frontend Assets
+# -----------------------------
+FROM node:20 AS frontend
 
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm install
+RUN npm ci
 
 COPY . .
 RUN npm run build
 
 
-# Stage 3: Production
+# -----------------------------
+# Stage 2: PHP Runtime
+# -----------------------------
 FROM dunglas/frankenphp:php8.2
 
+# Install required PHP extensions
 RUN install-php-extensions \
     gd \
     pdo_mysql \
     mbstring \
     xml \
-    zip \
     curl \
-    dom
+    zip \
+    dom \
+    fileinfo \
+    bcmath \
+    exif \
+    intl \
+    opcache
+
+# Install Composer
+COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
 WORKDIR /app
 
-COPY --from=composer /app /app
-COPY --from=node /app/public/build /app/public/build
+# Copy application
+COPY . .
+
+# Install PHP dependencies
+RUN composer install \
+    --no-dev \
+    --optimize-autoloader \
+    --no-interaction \
+    --ignore-platform-req=ext-gd
+
+# Copy built frontend assets
+COPY --from=frontend /app/public/build ./public/build
+
+# Optimize Laravel
+RUN php artisan config:clear || true
+RUN php artisan route:clear || true
+RUN php artisan view:clear || true
 
 EXPOSE 8000
 
